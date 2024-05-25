@@ -1,0 +1,1056 @@
+---
+title: "Predicting MLB Wins, Linear Regression"
+output: pdf_document
+date: "2024-04-21"
+---
+```{r echo = FALSE, results = 'hide', conflict = FALSE, include=FALSE}
+library(tidyverse)
+library(skimr)
+library(Lahman)
+library(dplyr)
+```
+
+
+Data Source = Lahman Baseball Package - Teams Data | Observational Unit: Baseball Team Data for seasons past 2000
+
+Relevant Variables:
+yearID: year
+
+franchID: franchise name abbreviated
+
+divID: Division ID (either west, central, east)
+G: Games
+
+Ghome: Games played at home
+W: Wins
+
+L: Loses
+
+DivWin: Categorical, binary yes or no whether team won their division
+
+WCWin: Categorical, binary yes or no whether team won the Wild Card Game (postseason)
+
+LgWIn: Categorical, binary yes or no whether team won their league (National or American League)
+
+WSWin: Categorical, binary yes or no whether team won the World Series
+
+R: A player is awarded a run if he crosses the plate to score his team a run.
+
+AB: At bats
+
+H: A hit (single, double, triple, home run)
+
+X2B: A double
+
+X3B: A triple
+
+HR: Home run
+
+BB: Walk
+
+SO: Strike out
+
+SB: Stolen bases
+
+CS: Caught stealing
+
+HBP: Hit by pitch
+
+SF: Sacrifice Fly
+
+RA: Runs allowed by team pitching
+
+ER: Any run that scores against a pitcher without the benefit of an error or a passed ball.
+
+ERA: Earned run average represents the number of earned runs a pitcher allows per nine innings with earned runs being any runs that scored without the aid of an error or a passed ball. ERA is the most commonly accepted statistical tool for evaluating pitchers. 
+
+CG: Complete game, the act of a pitcher pitching an entire game without the benefit of a relief pitcher. The total number of complete games thrown by a team’s pitchers during the season.
+
+SHO: A starting pitcher is credited with a shutout when he pitches the entire game for a team and does not allow the opposition to score.
+
+SV: A save is awarded to the relief pitcher who finishes a game for the winning team. 
+IPouts: Outs Pitched (innings pitched x 3)
+
+HA: Hits allowed by pitchers
+
+HRA: Home Runs allowed by pitchers
+
+BBA: Walks allowed by pitchers
+
+SOA: Strikeouts by pitchers
+
+E: Errors
+
+DP: Double Plays
+
+Park: Team stadium
+
+Attendance: Total attendance for team
+
+BPF: Three-year park factor for batters
+
+PPF: Pitching Park Factor - centered around 100, with numbers above 100 representing the percentage increase in run-scoring against pitchers in that park as compared to other parks, and numbers below 100 representing the percentage decrease in run-scoring against pitchers in that park. A metric for how hitter or pitcher-friendly a team’s park is.
+
+RD = Run Differential: Runs scored by batters minus runs allowed by pitchers
+
+wpct= Win Percentage (runs divided by the sum of runs scored and runs allowed)
+
+expwin = Pythagorean expectation is a formula invented by Bill James to estimate how many games a baseball team “should” have won based on the number of runs they scored (R) and allowed (RA). 
+
+diff: Wins minus expected wins. Comparing a team’s actual and Pythagorean winning percentage can be used to evaluate how lucky that team was (by examining the relation between the two winning percentages).
+
+BA = Batting average, number of hits divided by number of at bats. The most commonly used batting statistic.
+
+OBP = On base percentage. Sum of all on base scenarios (notably including walks) divided by the total number of at bats.
+
+SLG = An evaluative metric to determine player power. Singles, doubles, home runs, etc are weighted differently.
+
+OPS = On base percentage + slugging. An statistic to easily evaluate overall offensive performance
+wOBA = Weighted on base average. It is formed from taking the observed run values of various offensive events, dividing by a player's plate appearances, and scaling the result to be on the same scale as on-base percentage.
+
+ISO = Isolated power. Measures how many extra bases a player averages per at bat. 
+BABIP = Batting average on balls in play. Used to determine how "lucky" a batter is. High BABIP = more lucky
+
+FIP = Fielding independent pitching. Attempts to use the ERA scale to more accurately reflect events under the pitcher's control: home runs, strikeouts, walks (intentional ones stripped out) and hit-by-pitch.
+
+WHIP = Walks plus hits per inning pitched (WHIP) is a measurement of the number of baserunners a pitcher has allowed per inning pitched. 
+
+Ks_pitcher = Strikeout rate for pitchers
+
+K_rate = Strikeout rate for batters
+
+Attendance_Quality = Takes the quratiles of fan attendance and classifies as either "poor", "average", or "good".
+
+
+
+```{r echo = FALSE, results='hide'}
+
+head(Teams)
+data(Teams)
+print(colnames(Teams))
+
+data <- Teams %>%
+  dplyr::select(-matches("^lgID|franchID|park")) %>%
+  dplyr::select(yearID, G, W, L, DivWin, WCWin, LgWin, WSWin, R, HBP, SF,
+         AB, H, X2B, X3B, HR, BB, SO, SB, CS, RA, ER, ERA, CG, SHO, SV, IPouts, HA, HRA,
+         BBA, SOA, E, DP, FP, BPF, PPF, attendance) %>%
+  filter(yearID > 2000)
+
+good_attendance <- 2909929
+avg_attendance <- 2303989
+poor_attendance <- 1777024
+  
+data <- data %>%
+  mutate(
+    wpct = R^1.83 / (R^1.83 + RA^1.83),
+    expwin = round(wpct * (W + L)),
+    diff = W - expwin,
+    RD = R - RA, 
+    BA = H / AB, 
+    OBP = (H + BB + HBP) / (AB + BB + SF + HBP), 
+    SLG = ((H - X2B - X3B) + (2 * X2B) + (3 * X3B) + (4 * HR)) / AB, 
+    OPS = OBP + SLG,
+    wOBA = (0.691 * BB + 0.721 * HBP + 0.884 * (H - HR) + 1.257 * HR + 0.828 * X2B + 1.093 * X3B + 0.94 * SB - 0.275 * CS) / (AB + BB + SF + HBP),
+    ISO = (X2B + (2 * X3B) + (3 * HR)) / AB,
+    BABIP = (HA - HRA) / (AB - SOA - HRA + SF),
+    FIP = (13 * HRA + 3 * BBA - 2 * SO) / (IPouts / 3),
+    WHIP = (BBA + HA) / (IPouts / 3), 
+    Ks_Pitcher = SOA / (IPouts / 3),
+    K_BB = SO / BB, 
+    Attendance_Quality = case_when(
+      attendance < poor_attendance ~ "Poor",
+      attendance >= poor_attendance & attendance < avg_attendance ~ "Average",
+      TRUE ~ "Good"
+    )
+  )
+
+colnames(data)
+```
+
+
+```{r echo = FALSE, results='hide'}
+summary(data)
+```
+
+```{r echo = FALSE, fig.width=5, fig.height=4, warning =FALSE}
+mean_wins <- data %>%
+  group_by(yearID) %>%
+  summarise(avg_wins = mean(W, na.rm = TRUE))
+
+# Calculating mean team batting average (BA) over time
+mean_ba <- data %>%
+  group_by(yearID) %>%
+  summarise(avg_ba = mean(BA, na.rm = TRUE))
+
+mean_ops <- data %>%
+  group_by(yearID) %>%
+  summarise(avg_ops = mean(OPS, na.rm = TRUE))
+
+```
+```{r echo = FALSE, fig.width=7, fig.height=8 }
+# Plotting
+ggplot() +
+  geom_line(data = mean_ops, aes(x = yearID, y = avg_ops, color = "OPS"), linewidth = 1) +
+  geom_line(data = mean_ba, aes(x = yearID, y = avg_ba, color = "BA"), linewidth = 1) +
+  scale_color_manual(values = c("red", "blue"), name = "Statistic", labels = c("BA", "OPS")) +
+  labs(title = "Mean Team OPS and Batting Average (BA) Over Time",
+       x = "Year",
+       y = "Average",
+       color = "Statistic") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12),
+        plot.title = element_text(size = 14))
+```
+Team hitting quality is seeming to decrease. 
+Wins nowadays could be less dependent on offensive rather than pitching
+
+
+```{r echo = FALSE, fig.width=7, fig.height=8}
+ggplot(mean_ba, aes(x = yearID, y = avg_ba)) +
+  geom_line(color = "blue", linewidth = 1) +
+  labs(title = "Mean Team Batting Average (BA) Over Time",
+       x = "Year",
+       y = "Batting Average (BA)") +
+  theme_minimal()
+```
+Batting quality has decreased over time.
+
+```{r echo = FALSE, fig.width=7, fig.height=8}
+#pitching stats
+mean_era <- data %>%
+  group_by(yearID) %>%
+  summarise(avg_era = mean(ERA, na.rm = TRUE))
+
+mean_soa <- data %>%
+  group_by(yearID) %>%
+  summarise(avg_soa = mean(SOA, na.rm = TRUE))
+
+
+ggplot() +
+  geom_line(data = mean_soa, aes(x = yearID, y = avg_soa, color = "SOA"), linewidth = 1) +
+  scale_color_manual(values = "orange", name = "Statistic", labels = "SOA") +
+  labs(title = "Mean Team SOA Over Time",
+       x = "Year",
+       y = "Average",
+       color = "Statistic") +
+  theme_minimal()
+```
+Team strikeouts have increased over time (excpet for 2020, pandemic season)
+
+```{r echo = FALSE, fig.width=7, fig.height=6}
+ggplot() +
+  geom_line(data = mean_era, aes(x = yearID, y = avg_era, color = "ERA"), linewidth = 1) +
+  scale_color_manual(values = "red", name = "Statistic", labels = "ERA") +
+  labs(title = "Mean Team ERA Over Time",
+       x = "Year",
+       y = "Average",
+       color = "Statistic") +
+  theme_minimal()
+```
+Strikeouts (except for the year 2020 where there was a 60 game season) are increasing, and ERA is decreasing over time meaning pitch quality is increasing.
+
+```{r echo = FALSE, results = 'hide', conflict = FALSE, include=FALSE}
+library(corrplot)
+```
+
+```{r echo = FALSE, fig.width=7, fig.height=6}
+
+numerical_data <- data[, sapply(data, is.numeric)]
+correlation_matrix <- cor(numerical_data)
+
+# Set the size of the plot
+par(mar = c(1,1,1,1))
+
+options(repr.plot.width = 15, repr.plot.height = 15)
+
+# Plot the correlation matrix as a heatmap with larger text
+corrplot(correlation_matrix, method = "color", tl.cex = 0.5, diag = TRUE)
+
+
+```
+Correlation matrix: RD Wpct correlated with ERA. K/BB rate is correlated with OBP. WPCT correlated with wins.
+
+
+As a baseball fan, none of these results particularly surprised me. It is a known fact that pitching quality has increased over time, subsequently impacting hitting quality. I am curious about the 2020 season though, which was impacted by COVID and led to a 60 game season. Were there certain predictors that impacted wins during a 60 game season more than a 162 game season? I think I got a very representative sample of my population, not just because the data are team totals for these metrics, but also since the data is from 2001 onward. The sheer quantity of baseball data makes it a viable source to extract meaningful insights.
+
+###Part 2: 
+
+```{r echo = FALSE, results = 'hide', conflict = FALSE, include = FALSE}
+library(tidymodels)
+library(GGally)
+```
+
+```{r echo = FALSE, results = 'hide'}
+set.seed(3000)
+data_split <- initial_split(data, prop = 2/3)
+data_train <- training(data_split)
+data_test <- testing(data_split)
+
+
+selected_vars <- select(data_train, DivWin, attendance, HR, SO, W) 
+
+selected_vars2 <- select(data_train, W, K_BB, expwin, ERA, Ks_Pitcher)
+
+selected_vars3 <- select(data_train, W, WSWin, OBP, FIP, SOA)
+
+selected_vars4 <- select(data_train, W, BABIP, PPF, BPF, E, HR)
+
+selected_vars5 <- select(data_train, W, R, RA, H, HA)
+
+```
+
+```{r echo = FALSE, results = 'hide', include=FALSE, fig.show='hide'}
+ggpairs(selected_vars)
+```
+```{r echo = FALSE, results = 'hide', fig.show='hide'}
+ggpairs(selected_vars2)
+```
+```{r echo = FALSE, results = 'hide', fig.show='hide'}
+ggpairs(selected_vars2)
+```
+```{r echo = FALSE, results = 'hide', fig.show='hide'}
+ggpairs(selected_vars4)
+```
+```{r echo = FALSE, results = 'hide', fig.show='hide'}
+ggpairs(selected_vars5)
+```
+
+High OBP correlated with winning, seems like FIP and OBP are correlated which seems wrong... Wins and expected wins are correlated, which is a good sign because it shows that Runs and Runs Allowed are good indicators of team success. ggpairs(selected_vars5) shows data clumped at the bottom.
+
+
+From the original "Teams" dataset, I derived some commonly used baseball statistics which I defined earlier. 
+Expwin, diff, RD, BA, OBP, SLG, OPS, wOBA, ISO, BABIP, FIP, WHIP, Ks_Pitcher, K_BB, and Attendance_Quality. 
+These are interaction variables 
+because they exist and were created in the context of the original counting statistics. 
+
+I think these variables are necessary because they provided context to the original counting stats. For example, if there are more team hits, team BA (batting average) would increase. 
+
+~~~~~
+
+```{r echo = FALSE, results = 'hide', conflict = FALSE, include =FALSE}
+library(recipes)
+library(tidymodels)
+library(leaps) 
+library(plm)
+```
+
+```{r include=FALSE}
+library(leaps)
+library(caret)
+library(dplyr)
+```
+
+```{r results = 'hide', echo=FALSE}
+
+# Initial data preparation and splitting
+set.seed(3000)
+data_split <- initial_split(data, prop = 2/3)
+data_train <- training(data_split)
+data_test <- testing(data_split)
+
+# Model 1: Variable selection and model fitting
+data1 <- data_train %>%
+  filter(yearID > 2000) %>%
+  dplyr::select(W, R, AB, H, X2B, X3B, HR, BB, SO, SB, CS, HBP, SF, RA, ER, ERA, CG, SHO, SV, IPouts, HA, HRA, BBA, SOA, E, DP, FP, attendance, BPF, PPF)
+
+best_subsets1 <- regsubsets(W ~ ., data = data1, nvmax = ncol(data1) - 1)
+best_model1 <- which.min(summary(best_subsets1)$bic)
+best_variables1 <- names(which(summary(best_subsets1)$which[best_model1,]))
+print(best_variables1)
+
+# Model 2: Another variable selection and model fitting
+data2 <- data_train %>%
+  filter(yearID > 2000) %>%
+  dplyr::select(W, RD, BA, OBP, SLG, wOBA, ISO, BABIP, ERA, FIP, WHIP, Ks_Pitcher, K_BB)
+
+best_subsets2 <- regsubsets(W ~ ., data = data2, nvmax = ncol(data2) - 1)
+best_model2 <- which.min(summary(best_subsets2)$bic)
+best_variables2 <- names(which(summary(best_subsets2)$which[best_model2,]))
+print(best_variables2)
+
+# Forward-Backward Selection on a combined set of predictors
+data3 <- data_train %>%
+  filter(yearID > 2000) %>%
+  dplyr::select(W, R, H, BB, CS, RA, SHO, SV, IPouts, HA, HRA, BBA, E, BA, ISO, BABIP, ERA, WHIP, Ks_Pitcher)
+
+full_model <- lm(W ~ ., data = data3)
+null_model <- lm(W ~ 1, data = data3)
+bidirectional_model <- stats::step(null_model, scope = list(lower = null_model, upper = full_model), direction = "both")
+summary(bidirectional_model)
+```
+
+
+```{r figs, echo=FALSE, fig.width=7,fig.height=6, warning = FALSE}
+#Residual Plots
+
+model <- lm(formula = W ~ SV + R + E + SHO + RA + IPouts + WHIP + BABIP + 
+    HRA + HA + Ks_Pitcher + BA + BBA, data = data_train)
+
+# Plot residuals
+residuals_df <- data.frame(Residuals = resid(model))
+
+# Create residual plot - Randomly distributed residuals around 0!!!! 
+ggplot(residuals_df, aes(x = 1:nrow(residuals_df), y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(x = "Observation", y = "Residuals") + 
+  labs(caption = "Residual Plot for Chosen Variables (randomly distributed around 0)") + 
+  theme_minimal() 
+
+#Significance tests
+
+model_summary <- summary(model)
+
+# Print the summary
+print(model_summary)
+```
+
+I split my modified dataset into two separate datasets to separate any interaction variables. 
+Then, used best subset selection for variable selection sorted by lowest BIC. 
+
+After, I took the variables selected by each best subset (regsubset) and combined them into one model, 
+and then used forward-backward selection to select the most significant variables from there.
+
+
+Residuals are randomly distributed about y=0. 
+
+The most significant variables are R, RA, IPouts, WHIP, 
+BABIP, HA, Ks_Pitcher. But Errors, SHO, BA, and BBA are also significant, just less so. 
+Most of these metrics are pitching based, which tracks
+with my assessment earlier that pitching quality is increasing. 
+It would make sense that certain hitting metrics are significant indicators of team wins. 
+But, Ks_Pitcher is a strange instance because typically, you would expect more strikeouts
+to correlate with more wins.
+So I will choose to omit it from the model.
+
+Additionally, in the mid-1990's, a man named Bill James
+developed a formula that predicted the percentage of games a team is to win based on the 
+number of runs scored and runs allowed: 
+(runs scored)^2 = (runs scored)^2 +(runs allowed)^2, where runs allowed =0.
+My model includes both Runs Scored and Runs Allowed as 
+significant indicators of team wins, which is on par with Bill James' famous formula. 
+
+My final model: W ~ SV + R + RA + IPouts + WHIP + BABIP + HA + Ks_Pitcher
+
+
+```{r echo = FALSE }
+final_model <- lm(formula = W ~ SV + R + RA + IPouts + WHIP + BABIP + HA + Ks_Pitcher, data = data_train)
+
+summary(final_model)
+
+```
+
+Interpreting the Beta coefficients: 
+
+SV (Saves): For each additional save, the number of wins is expected to increase 
+by approximately 
+0.419 holding all other variables constant. 
+This is highly significant, with a p-value < 0.001 
+showing a strong positive relationship between saves and wins.
+ 
+R (Runs): Each additional run is associated with an increase of about 0.09 wins.
+This is also highly significant with a p-value < 0.001. 
+
+RA (Runs Allowed by Pitchers): This coefficient is negative, meaning that 
+as runs 
+allowed increase,
+the number of wins decreases. 
+Each run allowed by pitchers is associated with -0.068 wins. The p-value < 0.01, 
+and is highly significant. 
+
+IPouts (Innings Pitched Outs): More outs pitches is associated with more wins, 
+increasing approximately 0.013 wins for each out pitched, highly significant
+p-value < 0.001
+
+WHIP (Walks Plus Hits Per Inning Pitched): Significant negative relationship. 
+A high WHIP decreases wins significantly. 
+This indicates a significant negative relationship between WHIP and the number 
+of wins.
+Specifically, for each unit increase in WHIP the number of wins 
+is expected to decrease by approximately -10.05 assuming all other variables are held constant. 
+The difference between a 0.00 WHIP, 1.00 WHIP, and 2.00 WHIP is massive. 
+ 
+BABIP (Batting Average on Balls in Play): High BABIP increases wins 
+significantly. 
+The scale of BABIP typically ranges from 0 to 1, as it represents the batting
+average of a player excluding home runs and strikeouts. 
+Given this range, a coefficient as large as 56.810 suggests that even a small
+change in 
+BABIP could result in a large change in the predicted number of wins.
+
+HA (Hits Allowed by Pitchers): More hits allowed by pitchers, fewer wins. 
+Significant p value < 0.05. For each hit allowed by pitchers, 
+it is expected for wins to decrease by -0.008921, holding all other variables 
+constant.
+
+
+```{r echo = FALSE, include=FALSE}
+
+predictions_mlr <- predict(final_model, newdata = data_test)
+length(predictions_mlr)
+
+
+#Response Variable (helpful for later)
+y_test <- data_test$W
+
+SS_res <- sum((data_test$W - predictions_mlr)^2)
+SS_tot <- sum((data_test$W - mean(data_test$W))^2)
+R_squared <- 1 - (SS_res / SS_tot)
+
+R_squared
+
+# Calculate residuals
+residuals <- data_test$W - predictions_mlr
+
+# Calculate MSE
+mse <- mean(residuals^2)
+print(paste("MSE for the model:", mse))
+
+```
+
+
+My R-Squared is 0.9621022, which is high, which means my model explains a 
+significant portion of the variability in the number of wins 
+based on my predictors. While a high R^2 suggests a good fit to the data
+I tested it on, it doesn't necessarily guarantee that the model will accurately 
+describe the population or perform well on new, unseen data. If a model is too 
+closely fitted to the training data, it might capture noise as well as the 
+actual significant predictors. This can lead to excellent performance on
+training and test data
+but poor performance on any new data. 
+But overall, a high R^2 on my test data is promising.
+
+```{r echo=FALSE, fig.width=6,fig.height=7, warning = FALSE}
+ggplot(data = data.frame(Predicted = predictions_mlr, Residuals = residuals(final_model)), aes(x = Predicted, y = Residuals)) +
+     geom_point() +
+     geom_hline(yintercept = 0, color = "red") +
+     labs(title = "Residual Plot", x = "Predicted Wins", y = "Residuals")
+
+```
+```{r echo=FALSE, fig.width=7,fig.height=6, warning = FALSE}
+ggplot(data = data.frame(Predicted = predictions_mlr, Std_Residuals = rstandard(final_model)), aes(x = Predicted, y = Std_Residuals)) +
+  geom_hline(yintercept = 0, color = "red") +
+     geom_point() +
+     geom_hline(yintercept = c(-3, 3), color = "blue") +
+     labs(title = "Standardized Residual Plot", x = "Predicted Wins", y = "Standardized Residuals")
+```
+The residuals are clustered around higher predicted wins. This suggests that my
+model is making more predictions in this range, which makes sense because most
+team wins fall in this range. Additionally, the residuals on the right 
+(higher wins) do not show any systematic patterns 
+(like trends or increasing variance). This suggests that there isn't a bias or 
+changing variance at this end of the scale, which is positive.
+
+Standardized residuals provide a way to assess the relative size of the 
+residuals in terms of standard deviations, making it easier to identify 
+outliers. There only seems to be one outlier, but in the nature of baseball, 
+outliers exist and should be accounted for.
+
+```{r echo = FALSE}
+#Find the mean values of my predictors to use as predictors 
+predictor_means <- colMeans(data_train[c("SV", "R", "RA", "IPouts", "WHIP", "BABIP", "HA", "Ks_Pitcher", "BA")], na.rm = TRUE)
+
+# Print the means
+print(predictor_means)
+
+new_data <- data.frame(t(predictor_means))
+
+#Mean Predicted Value, Confidence Interval
+mean_prediction <- predict(final_model, newdata = new_data, interval = "confidence")
+print(mean_prediction)
+
+#Future Predicted Value with Prediction Interval
+
+future_prediction <- predict(final_model, newdata = new_data, interval = "prediction")
+future_prediction
+```
+Mean Predicted Value: This interval suggests that the true mean response, given
+the predictors set at their mean values, is expected to lie within this range
+(~78-~84 wins) with a 95% confidence level. The narrowness of this interval 
+indicates a high level of precision in estimating the mean response from the
+model.
+
+Future Prediction Interval: This interval is wider than the confidence interval 
+for the mean, reflecting not only the uncertainty in estimating the mean 
+response but also the additional variability of individual future observations 
+around this mean. 
+
+This interval tells us that if we were to observe a new data point with the
+predictors set at the same mean values, we would expect it to fall within this 
+range (~78- ~ 84 wins) with a 95% level of confidence.
+
+~~~~~~~~~~
+Interpretation of Model:
+
+The variables in my final model:
+
+SV (Saves): Directly impacts games won, as a save is recorded only when a 
+pitcher finishes a game his team wins.
+
+R (Runs): More runs scored typically lead to more games won.
+
+RA (Runs Allowed): Fewer runs allowed by the defense usually means more wins.
+
+IPouts (Innings Pitched Outs): Indicates the durability and effectiveness of 
+the pitching staff, affecting game outcomes.
+
+WHIP (Walks Plus Hits per Inning Pitched): Lower WHIP values suggest better 
+pitching control and effectiveness, leading to fewer opponents scoring.
+
+BABIP (Batting Average on Balls in Play): Reflects how often a team in play 
+(excluding home runs) gets hits, influencing game outcomes.
+
+HA (Hits Allowed): Fewer hits allowed generally leads to fewer runs scored by 
+the opposition.
+
+Variables not included in the final model might have been dropped due to:
+
+Redundancy: Some variables might provide overlapping information. For example, 
+ERA (Earned Run Average) and WHIP both measure pitching effectiveness but in 
+slightly different ways. The model might favor one over the other if they are
+highly correlated.
+
+Lack of Additional Predictive Power: Some variables, while potentially relevant,
+might not provide significant predictive power beyond what is already explained 
+by the included variables.
+
+Correlation Among Variables: 
+
+Potential High Correlation: Variables like ERA, WHIP, and FIP might be 
+correlated since they all relate to pitching effectiveness. Similarly, OBP, BA, 
+and SLG might be correlated as they relate to offensive performance.
+
+Impact of Correlation: High correlation among variables can lead to 
+multicollinearity, where it becomes difficult to isolate the effect of each 
+variable. This might lead to some variables being dropped from the model if
+they do not uniquely contribute to explaining the variance
+
+# Part 3 
+final_model <- lm(formula = W ~ SV + R + RA + IPouts + WHIP + BABIP + HA + Ks_Pitcher, data = data_train)
+
+Predicting Wins and these are the most significant predictors:
+-SV (Saves)
+-R (Runs)
+-RA (Runs Allowed by pitchers)
+-IPouts (Outs Pitched (innings pitched x 3)
+-WHIP (Walks and Hits per Innings Pitched)
+-BABIP (Batting average on balls in play)
+-HA (Hits allowed by pitchers)
+-Ks_pitcher (Strikeouts by pitcher)
+
+This data comes from the Lahman baseball package. I also did some feature engineering
+to make WHIP, BABIP, and Ks_Pitcher
+
+I am only using data past the year 2000.
+
+## Sparse & Smooth Linear Models
+
+```{r include = FALSE}
+library(glmnet)
+library(caret)
+library(MASS)
+```
+```{r echo = FALSE, include = FALSE}
+# Check factor variables
+sapply(data, class)
+
+# Convert factor variables to dummy variables
+data <- data.frame(model.matrix(~ . - 1, data = data))
+
+# Summarize missing values again
+colSums(is.na(data))
+
+# Option: Remove rows with any missing values
+data <- na.omit(data)
+
+# Split data into predictors and response
+x <- as.matrix(data[, -which(names(data) == "W")])
+y <- data$W
+
+# Ensure no NAs in 'y'
+if(any(is.na(y))) {
+  y <- na.omit(y)
+}
+
+```
+
+```{r echo = FALSE, include = FALSE}
+# Get rid of weird predictors, making it harder to run good model because # of p is approaching n
+
+weird_predictors <- c("lgIDAA", "lgIDFL", "lgIDNA", "lgIDPL", "lgIDUA", "franchIDATH", "franchIDBFB", "franchIDBFL", "franchIDBLC", "franchIDBLO", "franchIDBLT", "franchIDBLU", "franchIDBNA", "franchIDBRA", "franchIDBRD", "franchIDBRG", "franchIDBRS", "franchIDBTT", "franchIDBUF", "franchIDBWW", "franchIDCBK", "franchIDCBL", "franchIDCEN", "franchIDCFC", "franchIDCHH", "franchIDCHP", "franchIDCKK", "franchIDCLI", "franchIDCLS", "franchIDCLV", "franchIDCNA", "franchIDCNR", "franchIDCOR", "franchIDCPI", "franchIDDTN", "franchIDECK", "franchIDHAR", "franchIDHNA", "franchIDIHO", "franchIDIND", "franchIDKCC", "franchIDKCN", "franchIDKCP", "franchIDKCR", "franchIDKCU", "franchIDKEK", "franchIDLGR", "franchIDLOU", "franchIDMAN", "franchIDMAR", "franchIDMLA", "franchIDMLG", "franchIDMLU", "franchIDNAT", "franchIDNEW", "franchIDNHV", "franchIDNNA", "franchIDNYI", "franchIDNYP", "franchIDNYU", "franchIDOLY", "franchIDPBB", "franchIDPBS", "franchIDPHA", "franchIDPHI", "franchIDPHK", "franchIDPHQ", "franchIDPNA", "franchIDPRO", "franchIDPWS", "franchIDRES", "franchIDRIC", "franchIDROC", "franchIDROK", "franchIDSBS", "franchIDSLI", "franchIDSLM", "franchIDSLR", "franchIDSNA", "franchIDSTP", "franchIDSYR", "franchIDSYS", "franchIDTLM", "franchIDTOL", "franchIDTRO", "franchIDTRT", "franchIDWAS", "franchIDWBL", "franchIDWES", "franchIDWIL", "franchIDWNA", "franchIDWNL", "franchIDWNT", "franchIDWOR", "franchIDWSN", "franchIDWST", "parkAngel.Stadium", "parkAngel.Stadium.of.Anaheim", "parkAngels.Stadium.of.Anaheim", "parkAT.T.Park", "parkBank.One.Ballpark", "parkBusch.Stadium.II", "parkBusch.Stadium.III","parkChase.Field", "parkCinergy.Field", "parkCiti.Field", "parkCitizens.Bank.Park","parkComerica.Park", "parkComiskey.Park.II", "parkCoors.Field", "parkDodger.Stadium", "parkDolphin.Stadium", "parkEdison.International.Field", "parkEnron.Field", "parkFenway.Park.II",
+    "parkGlobe.Life.Field", "parkGlobe.Life.Park.in.Arlington", "parkGreat.American.Ball.Park",
+    "parkGuaranteed.Rate.Field", "parkHubert.H.Humphrey.Metrodome", "parkJacobs.Field",
+    "parkKauffman.Stadium", "parkMarlins.Park", "parkMcAfee.Coliseum", "parkMiller.Park",
+    "parkMinute.Maid.Park", "parkNationals.Park", "parkNetwork.Associates.Coliseum",
+    "parkO.co.Coliseum", "parkOakland.Coliseum", "parkOakland.Alameda.County.Coliseum",
+    "parkOracle.Park", "parkOriole.Park.at.Camden.Yards", "parkPacBell.Park", "parkPetco.Park",
+    "parkPNC.Park", "parkPro.Player.Stadium", "parkProgressive.Field", "parkQualcomm.Stadium",
+    "parkR.F.K..Stadium", "parkRangers.Ballpark.in.Arlington", "parkRogers.Centre",
+    "parkSafeco.Field", "parkSahlen.Field", "parkSBC.Park", "parkShea.Stadium", "parkSkydome",
+    "parkStade.Olympique", "parkStade.Olympique.Hiram.Bithorn.Stadium", "parkSun.Life.Stadium",
+    "parkSunTrust.Park", "parkT.Mobile.Park", "parkTarget.Field", "parkThe.Ballpark.at.Arlington",
+    "parkTropicana.Field", "parkTurner.Field", "parkU.S..Cellular.Field", "parkVeterans.Stadium",
+    "parkWrigley.Field", "parkYankee.Stadium.II", "parkYankee.Stadium.III"
+ )
+
+
+# Assuming 'data' is your full dataset
+data_clean <- data[, !(names(data) %in% weird_predictors)]
+```
+
+```{r echo = FALSE}
+set.seed(3000)  
+train_indices <- sample(1:nrow(data_clean), size = 0.8 * nrow(data_clean))  # 80% for training
+train_data <- data_clean[train_indices, ]
+test_data <- data_clean[-train_indices, ]
+
+# Split into predictors and response for training data
+x_train <- as.matrix(train_data[, -which(names(train_data) == "W")])
+y_train <- train_data$W
+
+# Fit the ridge regression model using glmnet
+ridge_model <- glmnet(x_train, y_train, alpha = 0)
+
+# Use cross-validation to find the optimal lambda
+cv_ridge <- cv.glmnet(x_train, y_train, alpha = 0)
+plot(cv_ridge)  # Visualize the lambda selection
+
+# Extract the best lambda value
+best_lambda <- cv_ridge$lambda.min
+print(paste("Best lambda:", best_lambda))
+```
+```{r echo = FALSE}
+# Prepare predictors for testing data
+x_test <- as.matrix(test_data[, -which(names(test_data) == "W")])
+
+# Make predictions using the ridge regression model
+predictions_rr <- predict(ridge_model, s = best_lambda, newx = x_test)
+```
+
+### Lasso 
+
+```{r setup, warning=FALSE, echo=FALSE}
+#LASSO
+
+final_lasso_model <- glmnet(x_train, y_train, alpha = 1)
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+best_lambda_lasso <- cv_lasso$lambda.min
+final_lasso_model <- glmnet(x_train, y_train, alpha = 1, lambda = best_lambda_lasso)
+
+plot(cv_lasso)
+# Predict using the newly trained model
+predictions_lasso <- predict(final_lasso_model, s = best_lambda_lasso, newx = x_test, type = "response")
+print(head(predictions_lasso))
+
+```
+
+
+# Compare models
+
+### MLR (final_model):
+
+R-squared: 0.964
+Adjusted R-squared: 0.9653 
+MSE: 10.4499670455261
+RMSE: 3.23264087790867
+
+Given the variance of W is approximately 255.17 and my MSE is 10.45, the ratio of MSE to the variance is about 0.041. This ratio is quite low, indicating that the Mean Squared Error of my model is small relative to the variance of the response variable This suggests that your model has significant predictive value and is performing well in terms of error magnitude relative to the natural variability in the data.
+
+Coefficients: SV, R, RA, IPouts, WHIP, BABIP, HA, Ks_Pitcher
+
+### Ridge Regression: 
+R-squared: 0.973940413040255
+Adjusted R-squared: 0.9262392343866
+MSE: 1.70366541619586"
+RMSE: 1.19888363620898"
+
+
+### LASSO 
+
+R-squared: 0.999182054984301
+Adjusted R-squared: 0.99761887117652
+MSE: 0.198471103686519"
+RMSE: 0.445501
+
+The coefficients selected by LASSO were: SV (Saves), expwin (Expected Wins), diff (Run Differential)
+
+```{r echo = FALSE, warning =FALSE}
+# Check the lengths of all vectors
+lengths <- c(y_test = length(y_test), 
+             predictions_mlr = length(predictions_mlr), 
+             predictions_rr = length(predictions_rr), 
+             predictions_lasso = length(predictions_lasso))
+
+# Find the minimum length
+min_length <- min(lengths)
+
+# Trim the vectors to the minimum length
+y_test_trimmed <- y_test[1:min_length]
+predictions_mlr_trimmed <- predictions_mlr[1:min_length]
+predictions_rr_trimmed <- predictions_rr[1:min_length]
+predictions_lasso_trimmed <- predictions_lasso[1:min_length]
+
+# Create a data frame with trimmed vectors
+data_plot <- data.frame(
+  Observed = y_test_trimmed,
+  MLR = predictions_mlr_trimmed,
+  RR = predictions_rr_trimmed,
+  LASSO = predictions_lasso_trimmed
+)
+
+# Reshape the data to a long format
+data_plot_long <- pivot_longer(data_plot, 
+                               cols = c("MLR", "RR", "LASSO"), 
+                               names_to = "Model", 
+                               values_to = "Predicted")
+
+# Plot the data
+ggplot(data_plot_long, aes(x = Observed, y = Predicted, color = Model)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Comparison of Prediction Models",
+       x = "Observed Response",
+       y = "Predicted Response",
+       color = "Model Type") +
+  theme_minimal()
+
+```
+### RR and LASSO Performance:
+Closeness to y=x. When the predictions from the RR and LASSO models are close to y=x, the models are performing well. y=x represents perfect predictions where the predicted values exactly match the observed values. Being close to this line indicates that the models have a high accuracy in terms of prediction. Both RR and LASSO incorporate regularization, which helps in reducing overfitting. This is effective because my dataset has multicollinearity and is high-dimensional. The regularization might be helping these models generalize better on the test data.
+ 
+###MLR Performance:
+Scattered Plot Points: The MLR predictions are more scattered and deviate from the y=x line. This suggests that the MLR model might be experiencing overfitting or underfitting, or it might not be capturing all the relevant patterns in the data. This could be due to:
+
+Lack of Regularization: Unlike RR and LASSO, standard MLR doesn't include regularization which can lead to overfitting, especially if there are many predictors or if the predictors are highly correlated.
+Model Complexity: MLR might be too simple or too complex for the data structure, failing to capture the essential relationships between variables.
+
+
+#Run both smoothing spline and loess smoother models
+
+```{r echo = FALSE}
+# Fit smoothing spline models with different spar values
+ss_model1 <- smooth.spline(data_train$RD, data_train$W, spar = 0.5)
+ss_model2 <- smooth.spline(data_train$RD, data_train$W, spar = 0.7)
+ss_model3 <- smooth.spline(data_train$RD, data_train$W, spar = 0.9)
+ss_model4 <- smooth.spline(data_train$RD, data_train$W, spar = 1.1)
+```
+
+```{r echo = FALSE}
+# Fit LOESS models with different span values
+loess_model1 <- loess(W ~ RD, data = data_train, span = 0.2)
+loess_model2 <- loess(W ~ RD, data = data_train, span = 0.4)
+loess_model3 <- loess(W ~ RD, data = data_train, span = 0.6)
+loess_model4 <- loess(W ~ RD, data = data_train, span = 0.8)
+```
+
+
+```{r echo = FALSE}
+ggplot(data_test, aes(x = RD, y = W)) +
+  geom_point() +
+  geom_line(aes(y = predict(ss_model1, data_test$RD)$y), color = "blue") +
+  geom_line(aes(y = predict(loess_model1, newdata = data.frame(RD = data_test$RD))), color = "red", linetype = "dashed") +
+  ggtitle("Comparison of Smoothing Spline and LOESS Models") +
+  labs(color = "Model Type")
+```
+```{r echo = FALSE}
+# Create a fine grid for RD values
+fine_grid <- data.frame(RD = seq(min(data_train$RD), max(data_train$RD), length.out = 100))
+
+# Generate predictions for smoothing spline models
+ss_predictions <- data.frame(
+  RD = rep(fine_grid$RD, 4),
+  Predicted = c(predict(ss_model1, fine_grid$RD)$y,
+                predict(ss_model2, fine_grid$RD)$y,
+                predict(ss_model3, fine_grid$RD)$y,
+                predict(ss_model4, fine_grid$RD)$y),
+  Model = factor(rep(c("SS1", "SS2", "SS3", "SS4"), each = 100))
+)
+
+# Generate predictions for LOESS models
+loess_predictions <- data.frame(
+  RD = rep(fine_grid$RD, 4),
+  Predicted = c(predict(loess_model1, newdata = fine_grid),
+                predict(loess_model2, newdata = fine_grid),
+                predict(loess_model3, newdata = fine_grid),
+                predict(loess_model4, newdata = fine_grid)),
+  Model = factor(rep(c("Loess1", "Loess2", "Loess3", "Loess4"), each = 100))
+)
+```
+
+```{r include = FALSE}
+library(ggrepel)
+```
+
+```{r echo = FALSE, warning =FALSE}
+ggplot(data_train, aes(x = RD, y = W)) +
+  geom_point(alpha = 0.5, color = "black") +
+  geom_line(data = ss_predictions, aes(y = Predicted, color = Model), size = 1) +
+  geom_text_repel(data = ss_predictions, aes(label = Model, y = Predicted), 
+                  color = "black", size = 3, show.legend = FALSE) +
+  scale_color_manual(values = c("blue", "green", "red", "purple")) +
+  labs(title = "Smoothing Spline Models",
+       x = "Run Differential (RD)",
+       y = "Wins (W)",
+       color = "Model Type") +
+  theme_minimal()
+```
+
+
+```{r echo = FALSE}
+# Plotting LOESS Models
+ggplot(data_train, aes(x = RD, y = W)) +
+  geom_point(alpha = 0.5, color = "black") +
+  geom_line(data = loess_predictions, aes(y = Predicted, color = Model), linewidth = 1, linetype = "dashed") +
+  scale_color_manual(values = c("blue", "green", "red", "purple")) +
+  labs(title = "LOESS Models",
+       x = "Run Differential (RD)",
+       y = "Wins (W)",
+       color = "Model Type") +
+  theme_minimal()
+```
+Smoothing Spline Plot: Lower spar values may show more variability following the data closely, while higher values result in smoother curves. These models are generally good at providing a balance between smoothness and fit. The spar parameter controls this balance:
+
+LOESS Plot: The span parameter variations will show similar trends where smaller spans fit the data more closely, capturing more fluctuations, and larger spans smooth out these fluctuations, providing a general trend. LOESS is particularly flexible and locally adaptive, making it excellent for datasets with varying trends across the domain.
+
+Given the considerations of smoothness, interpretability, and the ability to capture variability, I would recommend choosing the LOESS model with a span of 0.6 (loess_model3) for future predictions. This model offers a balanced approach with moderate smoothing that captures significant trends without overly fitting minor fluctuations in the data. The flexibility of LOESS allows it to adapt well to the underlying patterns in the data, making it suitable for datasets with complex relationships that do not conform to a specific functional form. Additionally, the moderate span helps in maintaining a good balance between bias and variance, providing a reliable model for predicting future outcomes based on the run differential. This choice is based on the assumption that the model performs consistently across different data segments and aligns closely with observed values in visual assessments.
+
+
+##Conclusion
+
+I was suprised that the MLR performance wasn't as good as the model summary
+indicated it was. LASSO provided the best results for feature selection which led to 
+a simplified, still effective model. Because my data was only from the year 2000
+onwards, I am curious if during different time periods, different variables would significantly 
+contribute to wins.
+
+##Logistic regression: Will this team make the playoffs?
+
+```{r error = TRUE, echo = FALSE}
+geom_text_repel(max.overlaps = Inf)
+
+    
+# Create DivWin based on DivWinY and DivWinN in data_test
+data_test$DivWin <- ifelse(data_test$DivWinY == 1, "Y", 
+                           ifelse(data_test$DivWinN == 1, "N", NA))
+
+# Convert to factor with specified levels
+data_test$DivWin <- factor(data_test$DivWin, levels = c("N", "Y"))
+
+data_test <- data_test[, !(names(data_test) %in% c("DivWinN", "DivWinY"))]
+
+# Combine binary variables into a single column
+data_train$DivWin <- ifelse(data_train$DivWinY == 1, "Y", "N")
+
+# Convert to factor
+data_train$DivWin <- as.factor(data_train$DivWin)
+
+# Drop the binary variables
+data_train <- subset(data_train, select = -c(DivWinY, DivWinN))
+
+# Exclude 'lgID' and 'franchID' from both training and testing datasets
+data_train <- data_train[, !(names(data_train) %in% c("lgID", "franchID"))]
+data_test <- data_test[, !(names(data_test) %in% c("lgID", "franchID"))]
+
+# Exclude 'Attendance_Quality' from both training and testing datasets
+data_train <- data_train[, !(names(data_train) %in% c("Attendance_Quality"))]
+data_test <- data_test[, !(names(data_test) %in% c("Attendance_Quality"))]
+
+data_train <- droplevels(data_train)
+
+# Remove rows with missing DivWin values
+data_train <- data_train[complete.cases(data_train$DivWin), ]
+
+# Fit logistic regression model using the remaining variables
+logistic_model <- glm(DivWin ~ SV + R + RA + IPouts + WHIP + BABIP + HA + Ks_Pitcher + RD + diff, data = data_train, family = binomial())
+
+summary(logistic_model)
+```
+These coefficients represent the change in the log odds of the dependent variable DivWin for a one-unit change in the predictor variables, holding all other predictors constant.
+
+For example, the coefficient for R (Runs scored) is 0.027668, indicating that for each additional run scored, the log odds of winning (DivWin) increase, suggesting a positive relationship between runs scored and winning.
+
+Variables R, RA, and diff have very small p-values, suggesting these predictors are statistically significant in relation to DivWin.
+
+Null deviance: 434.75 on 439 degrees of freedom
+Residual deviance: 210.17 on 430 degrees of freedom
+
+This indicates that the model with predictor variables provides a better fit to the data compared to the null model (intercept-only model), as shown by the reduction in deviance from 434.75 to 210.17. 
+
+```{r echo = FALSE}
+# Create residuals plot
+residuals_data <- data.frame(
+  Residuals = residuals(logistic_model, type = "deviance"),
+  Observation = 1:length(residuals(logistic_model))
+)
+ggplot(residuals_data, aes(x = Observation, y = Residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Residuals Plot", x = "Observation", y = "Residuals") +
+  theme_minimal()
+```
+Residuals randomly distributed around y=0.
+
+```{r echo = FALSE}
+# Extract coefficients
+coef_data <- as.data.frame(coef(summary(logistic_model)))
+coef_data$Variable <- rownames(coef_data)
+
+# Create coefficient plot
+ggplot(coef_data, aes(x = Variable, y = Estimate, fill = Estimate > 0)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Model Coefficients", x = "Coefficient", y = "Estimate") +
+  theme_minimal()
+```
+Each bar in the plot represents the estimated effect of one predictor variable on the log odds of the outcome (DivWin), holding all other variables constant.
+
+Positive Coefficients: Variables with positive estimates (WHIP, diff) increase the log odds of the outcome. In your plot, these are shown with bars extending to the right of the zero line.
+
+Negative Coefficients: Variables with negative estimates (BABIP, SV, RA) decrease the log odds of the outcome. These are shown with bars extending to the left.
+
+```{r echo = FALSE}
+# Get predicted probabilities
+predicted_probs <- predict(logistic_model, type = "response")
+prob_data <- data.frame(Probabilities = predicted_probs)
+
+ggplot(prob_data, aes(x = Probabilities)) +
+  geom_histogram(bins = 30, fill = "blue", color = "black") +
+  labs(title = "Histogram of Predicted Probabilities", x = "Predicted Probability", y = "Frequency") +
+  theme_minimal()
+```
+The shape of the histogram shows the distribution of predicted probabilities for DivWin. There is unimodal distribution heavily skewed towards one side. This might indicate that my model is uncertain about its predictions or biased towards one class.
+
+The spread of the histogram (ranging from 0 to 1) shows how probabilities are distributed between the certain (close to 0 or 1) and uncertain (around 0.5) predictions.
+
+Wider spreads generally indicate that the model is utilizing the available features effectively to differentiate between the outcomes. Conversely, a narrow spread centered around a particular value (like 0.5) might suggest that the model is not effectively distinguishing between the classes.
+
+```{r include = FALSE}
+library(pROC)
+```
+
+```{r error = TRUE, echo= FALSE}
+#ROC curve
+roc_result <- roc(data_train$DivWin, fitted(logistic_model))
+
+#ROC curve plot
+roc_data <- data.frame(
+  TPR = roc_result$sensitivities,
+  FPR = roc_result$specificities
+)
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line() +
+  geom_abline(linetype = "dashed") +
+  labs(title = "ROC Curve", x = "False Positive Rate", y = "True Positive Rate") +
+  theme_minimal()
+```
+The ROC (Receiver Operating Characteristic) curve is good for evaluating the performance of my logistic regression model, particularly in terms of its ability to distinguish between the two classes (e.g., "Y" and "N" in DivWin). 
+
+A high y-intercept in the ROC curve means that at the lowest threshold (just above the minimum predicted probability), the model is able to correctly identify a large proportion of the actual positives. This indicates strong sensitivity at lower thresholds.
+
+The exponential decrease suggests that as I increase the threshold for predicting a positive class, the TPR decreases rapidly compared to the increase in FPR. This pattern often indicates that while the model is initially effective at identifying true positives, its ability to continue distinguishing positive cases becomes less effective as the threshold increases.
+
+This type of ROC curve can sometimes indicate a model that performs well in identifying positive cases up to a certain point, after which its discriminative ability declines sharply. It might be particularly sensitive to changes in the threshold setting.
+
+
